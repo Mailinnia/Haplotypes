@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from natsort import natsorted, ns
+from itertools import combinations as combi
 
 
 def parse_args():
@@ -271,52 +272,61 @@ def findFreqs(args, tsv_dict, variant_dict):
     tab.to_csv(args.outputbase+'_snp-freq.csv', sep='\t', index=False, header=False)
 
 
-def findHaplo3(args, tsv_dict, variant_dict):
-    snps = sorted(list(tsv_dict.keys()))
-    _,_,total_reads = variant_dict.get(snps[0])
-  
-    snp1_pos = snps[0]
-    snp2_pos = snps[1]
-    snp3_pos = snps[2] 
-    snp1 = set(tsv_dict.get(snp1_pos))
-    snp2 = set(tsv_dict.get(snp2_pos))
-    snp3 = set(tsv_dict.get(snp3_pos))
+def findHaplo(args, tsv_dict, variant_dict):
+    dict_keys = sorted(list(tsv_dict.keys()))
+    _,_,total_reads = variant_dict.get(dict_keys[0])
     
-    snp1_2 = snp1.intersection(snp2)
-    snp1_3 = snp1.intersection(snp3)
-    snp2_3 = snp2.intersection(snp3)
-    snp1_2_3 = snp1.intersection(snp2.intersection(snp3))
+    common_dict = tsv_dict
+    if len(tsv_dict) > 1:
+        for i, j in combi(dict_keys,2):
+            i_set = set(tsv_dict.get(i))
+            j_set = set(tsv_dict.get(j))
+            common = i_set.intersection(j_set)
+            key_name = ';'.join([i, j])
+            common_dict[key_name] = common
 
-    snp1_2_only = snp1_2-snp1_2_3
-    snp1_3_only = snp1_3-snp1_2_3    
-    snp2_3_only = snp2_3-snp1_2_3
+    if len(tsv_dict) > 2:
+        for i, j, k in combi(dict_keys,3):
+            i_set = set(tsv_dict.get(i))
+            j_set = set(tsv_dict.get(j))
+            k_set = set(tsv_dict.get(k))
+            common = i_set.intersection(j_set.intersection(k_set))
+            key_name = ';'.join([i, j, k])
+            common_dict[key_name] = common
 
-    snp1_only = snp1-snp1_2_only-snp1_3_only-snp1_2_3
-    snp2_only = snp2-snp1_2_only-snp2_3_only-snp1_2_3
-    snp3_only = snp3-snp1_3_only-snp2_3_only-snp1_2_3
+    if len(tsv_dict) > 3:
+        for i, j,k,l in combi(dict_keys,4):
+            i_set = set(tsv_dict.get(i))
+            j_set = set(tsv_dict.get(j))
+            k_set = set(tsv_dict.get(k))
+            l_set = set(tsv_dict.get(l))
+            common = i_set.intersection(j_set.intersection(k_set.intersection(l_set)))
+            key_name = ';'.join([i, j, k, l])
+            common_dict[key_name] = common
 
-    snp1_only_perc =len(snp1_only)/total_reads
-    snp2_only_perc =len(snp2_only)/total_reads
-    snp3_only_perc =len(snp3_only)/total_reads
+    uniq_dict = dict()
+    for x, y in combi(list(common_dict.keys()),2):
+        x_split = x.split(';')
+        if all(item in y for item in x_split):
+            if x in uniq_dict:
+                x_set = uniq_dict.get(x)
+            else:
+                x_set = set(common_dict.get(x))
+            y_set = set(common_dict.get(y))
+            x_uniq = x_set-y_set
+            uniq_dict[x] = x_uniq
 
-    snp1_2_only_perc = len(snp1_2_only)/total_reads
-    snp1_3_only_perc = len(snp1_3_only)/total_reads
-    snp2_3_only_perc = len(snp2_3_only)/total_reads
+    for key in set(common_dict.keys())-set(uniq_dict.keys()):
+        uniq_dict[key] = common_dict.get(key)
 
-    snp1_2_3_perc = len(snp1_2_3)/total_reads
- 
-    results = [
-        (snp1_pos,len(snp1_only), snp1_only_perc, list(snp1_only)),
-        (snp2_pos,len(snp2_only), snp2_only_perc, list(snp2_only)),
-        (snp3_pos,len(snp3_only), snp3_only_perc, list(snp3_only)),
-        (snp1_pos+';'+snp2_pos, len(snp1_2_only), snp1_2_only_perc, list(snp1_2_only)),
-        (snp1_pos+';'+snp3_pos, len(snp1_3_only), snp1_3_only_perc, list(snp1_3_only)),
-        (snp2_pos+';'+snp3_pos, len(snp2_3_only), snp2_3_only_perc, list(snp2_3_only)),
-        (snp1_pos+';'+snp2_pos+';'+snp3_pos,len(snp1_2_3), snp1_2_3_perc, list(snp1_2_3))
-    ]
+    results = []
+    for key in uniq_dict.keys():
+        uniq_reads = len(uniq_dict.get(key))
+        results.append((key, uniq_reads, uniq_reads/total_reads, common_dict.get(key)))
 
     tab = pd.DataFrame(results)
     tab.columns = ['SNP','Reads', 'Percent', 'Names']
+
     tab = tab.drop(labels='Names', axis = 1)
     tab.loc[len(tab)] = ['No_SNPs', total_reads-tab['Reads'].sum(), 1-tab['Percent'].sum()]
     print('\n########## SNP HAPLOTYPES ##########')
@@ -327,70 +337,6 @@ def findHaplo3(args, tsv_dict, variant_dict):
         snp_pos, _,_,read_names = item
         fname = snp_pos+'_haplo.names'
         writeHaplos(read_names, fname)
-
-def findHaplo2(args, tsv_dict, variant_dict):
-    snps = sorted(list(tsv_dict.keys()))
-    _,_,total_reads = variant_dict.get(snps[0])
-  
-    snp1_pos = snps[0]
-    snp2_pos = snps[1]
-    snp1 = set(tsv_dict.get(snp1_pos))
-    snp2 = set(tsv_dict.get(snp2_pos))
-
-    snp1_2 = snp1.intersection(snp2)
-
-    snp1_only = snp1-snp1_2
-    snp2_only = snp2-snp1_2
-
-    snp1_only_perc =len(snp1_only)/total_reads
-    snp2_only_perc =len(snp2_only)/total_reads
-
-    snp1_2_perc = len(snp1_2)/total_reads
- 
-    results = [
-        (snp1_pos,len(snp1_only), snp1_only_perc, list(snp1_only)),
-        (snp2_pos,len(snp2_only), snp2_only_perc, list(snp2_only)),
-        (snp1_pos+';'+snp2_pos, len(snp1_2), snp1_2_perc, list(snp1_2)),
-    ]
-
-    tab = pd.DataFrame(results)
-    tab.columns = ['SNP','Reads', 'Percent', 'Names']
-    tab = tab.drop(labels='Names', axis = 1)
-    tab.loc[len(tab)] = ['No_SNPs', total_reads-tab['Reads'].sum(), 1-tab['Percent'].sum()]
-    print('\n########## SNP HAPLOTYPES ##########')
-    print(tab)
-    tab.to_csv(args.outputbase+'_haplotype.csv', sep='\t', index=False, header=False)
-    
-    for item in results:
-        snp_pos, _,_,read_names = item
-        fname = snp_pos+'_haplo.name'
-        writeHaplos(read_names, fname) 
-
-def findHaplo1(args, tsv_dict, variant_dict):
-    snps = sorted(list(tsv_dict.keys()))
-    _,_,total_reads = variant_dict.get(snps[0])
-  
-    snp1_pos = snps[0]
-    snp1 = set(tsv_dict.get(snp1_pos))
-
-    snp1_only_perc =len(snp1)/total_reads
- 
-    results = [
-        (snp1_pos,len(snp1), snp1_only_perc, list(snp1)),
-    ]
-
-    tab = pd.DataFrame(results)
-    tab.columns = ['SNP','Reads', 'Percent', 'Names']
-    tab = tab.drop(labels='Names', axis = 1)
-    tab.loc[len(tab)] = ['No_SNPs', total_reads-tab['Reads'].sum(), 1-tab['Percent'].sum()]
-    print('\n########## SNP HAPLOTYPES ##########')
-    print(tab)
-    tab.to_csv(args.outputbase+'_haplotype.csv', sep='\t', index=False, header=False)
-    
-    for item in results:
-        snp_pos, _,_,read_names = item
-        fname = snp_pos+'_haplo.name'
-        writeHaplos(read_names, fname) 
 
 def writeHaplos(region_list, fname):
     original_dir = os.getcwd()
@@ -413,14 +359,8 @@ def main():
     tsv_dict, variant_dict = haploTSV(args)
     findFreqs(args, tsv_dict, variant_dict)
     if not args.freq_only:
-        if len(variant_dict) == 3:
-            findHaplo3(args, tsv_dict, variant_dict)
-        elif len(variant_dict) == 2:
-            findHaplo2(args,tsv_dict, variant_dict)
-        elif len(variant_dict) == 1:
-            findHaplo1(args,tsv_dict, variant_dict)
-        else:
-            print(len(variant_dict), 'variants found. Seems to be outside of scope of 1-3 variants for haplotyping.')
+        findHaplo(args, tsv_dict, variant_dict)
+
     output_config = createConfig(args, False)
 
 
