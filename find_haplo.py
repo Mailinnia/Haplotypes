@@ -9,6 +9,7 @@ import pandas as pd
 from Bio import SeqIO
 from natsort import natsorted, ns
 from itertools import combinations as combi
+from functools import reduce
 
 
 def parse_args():
@@ -162,9 +163,11 @@ def haploTSV(args):
             vcf_ref, vcf_alt,_ = variant_dict.get(ref_pos)
             if read_base == vcf_alt and ref_base == vcf_ref:
                 if ref_pos not in tsv_dict:
-                    tsv_dict[ref_pos] = [read_name]
+                    tsv_dict[ref_pos] = {read_name}
                 else:
-                    tsv_dict[ref_pos] += [read_name]
+                    dict_set = tsv_dict.get(ref_pos)
+                    dict_set.update({read_name})
+                    tsv_dict[ref_pos] = dict_set
 
     return tsv_dict, variant_dict
 
@@ -273,56 +276,17 @@ def findFreqs(args, tsv_dict, variant_dict):
 
 
 def findHaplo(args, tsv_dict, variant_dict):
-    dict_keys = sorted(list(tsv_dict.keys()))
+    dict_keys = list(tsv_dict.keys())
     _,_,total_reads = variant_dict.get(dict_keys[0])
-    
-    common_dict = tsv_dict
-    if len(tsv_dict) > 1:
-        for i, j in combi(dict_keys,2):
-            i_set = set(tsv_dict.get(i))
-            j_set = set(tsv_dict.get(j))
-            common = i_set.intersection(j_set)
-            key_name = ';'.join([i, j])
-            common_dict[key_name] = common
-
-    if len(tsv_dict) > 2:
-        for i, j, k in combi(dict_keys,3):
-            i_set = set(tsv_dict.get(i))
-            j_set = set(tsv_dict.get(j))
-            k_set = set(tsv_dict.get(k))
-            common = i_set.intersection(j_set.intersection(k_set))
-            key_name = ';'.join([i, j, k])
-            common_dict[key_name] = common
-
-    if len(tsv_dict) > 3:
-        for i, j,k,l in combi(dict_keys,4):
-            i_set = set(tsv_dict.get(i))
-            j_set = set(tsv_dict.get(j))
-            k_set = set(tsv_dict.get(k))
-            l_set = set(tsv_dict.get(l))
-            common = i_set.intersection(j_set.intersection(k_set.intersection(l_set)))
-            key_name = ';'.join([i, j, k, l])
-            common_dict[key_name] = common
-
-    uniq_dict = dict()
-    for x, y in combi(list(common_dict.keys()),2):
-        x_split = x.split(';')
-        if all(item in y for item in x_split):
-            if x in uniq_dict:
-                x_set = uniq_dict.get(x)
-            else:
-                x_set = set(common_dict.get(x))
-            y_set = set(common_dict.get(y))
-            x_uniq = x_set-y_set
-            uniq_dict[x] = x_uniq
-
-    for key in set(common_dict.keys())-set(uniq_dict.keys()):
-        uniq_dict[key] = common_dict.get(key)
 
     results = []
-    for key in uniq_dict.keys():
-        uniq_reads = len(uniq_dict.get(key))
-        results.append((key, uniq_reads, uniq_reads/total_reads, common_dict.get(key)))
+    for r in range(len(tsv_dict)):
+        for combo in combi(natsorted(list(tsv_dict.keys())), r+1):
+            name = ";".join(combo)
+            intersection = reduce(set.intersection, (tsv_dict[n] for n in combo))
+            unique = reduce(set.difference, (tsv_dict[n] for n in tsv_dict if n not in combo), intersection)
+            uniq_no = len(unique)
+            results.append((name, uniq_no, uniq_no/total_reads, intersection))
 
     tab = pd.DataFrame(results)
     tab.columns = ['SNP','Reads', 'Percent', 'Names']
